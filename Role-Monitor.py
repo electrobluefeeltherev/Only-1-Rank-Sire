@@ -35,7 +35,7 @@ bot = commands.Bot(command_prefix="!rlrnk", intents=intents)
 
 @bot.event
 async def on_ready():
-    activity = discord.Activity(type=discord.ActivityType.watching, name="You bozo's pick up more than one 'Rank Role' 😒")
+    activity = discord.Activity(type=discord.ActivityType.watching, name="Rank Roles of AIRLF")
     await bot.change_presence(status=discord.Status.online, activity=activity)
     print(f"Bot is online as {bot.user}")
 
