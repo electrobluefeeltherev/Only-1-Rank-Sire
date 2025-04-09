@@ -77,7 +77,7 @@ async def on_member_update(before, after):
                 )
                 dm_embed.add_field(
                     name="**Reason(dumb version):**",
-                    value=f"You cant pick up **{role.name}** role if you're **{current_rank_role}**", inline=False
+                    value=f"You can't pick up **{role.name}** role if you're **{current_rank_role}**", inline=False
                 )
                 dm_embed.set_footer(text="Only 1 Rank Sire")
 
