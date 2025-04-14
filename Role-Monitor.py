@@ -43,69 +43,75 @@ async def on_member_update(before, after):
         return
 
     # ----- LFG ROLE CHECK -----
+    user_role_ids = [r.id for r in after.roles]
     current_rank_role = next((r for r in after.roles if r.id in ROLE_GROUP), None)
-    new_roles = [role for role in after.roles if role not in before.roles]
 
-    for role in new_roles:
-        lfg_role_id = role.id
+    lfg_roles = [r for r in after.roles if r.id in LFG_TO_RANK]
+    valid_lfg_roles = []
 
-        if lfg_role_id in LFG_TO_RANK:
-            required_rank_ids = LFG_TO_RANK[lfg_role_id]
-            user_role_ids = [r.id for r in after.roles]
-            has_required = any(rank_id in user_role_ids for rank_id in required_rank_ids)
+    for lfg_role in lfg_roles:
+        required_ranks = LFG_TO_RANK[lfg_role.id]
+        if any(rank in user_role_ids for rank in required_ranks):
+            valid_lfg_roles.append(lfg_role)
 
-            if not has_required:
-                try:
-                    await after.remove_roles(role, reason="Missing required rank role.")
-                except discord.Forbidden:
-                    print(f"❌ Cannot remove {role.name} from {after.display_name}")
-                    return
+    if len(valid_lfg_roles) > 1:
+        # If user somehow got multiple valid LFG roles, keep the newest one
+        new_lfg_role = next((r for r in after.roles if r.id in [r.id for r in valid_lfg_roles] and r not in before.roles), valid_lfg_roles[0])
+        roles_to_remove = [r for r in lfg_roles if r != new_lfg_role]
+        try:
+            await after.remove_roles(*roles_to_remove, reason="Only one LFG role allowed")
+        except discord.Forbidden:
+            print(f"❌ Cannot remove LFG roles from {after.display_name}")
+        # DM the user
+        try:
+            dm_embed = discord.Embed(
+                title="Your LFG roles were updated",
+                color=discord.Color.orange(),
+                timestamp=datetime.utcnow()
+            )
+            dm_embed.add_field(name="Kept Role", value=new_lfg_role.name, inline=False)
+            dm_embed.add_field(name="Removed Roles", value=", ".join(r.name for r in roles_to_remove), inline=False)
+            await after.send(embed=dm_embed)
+        except discord.Forbidden:
+            print(f"❌ Couldn't DM {after.display_name}")
+    elif len(valid_lfg_roles) == 0 and lfg_roles:
+        # User has LFG roles but doesn't meet requirements → remove all
+        try:
+            await after.remove_roles(*lfg_roles, reason="Missing required rank role(s)")
+        except discord.Forbidden:
+            print(f"❌ Cannot remove invalid LFG roles from {after.display_name}")
+        required_ranks_for_first = LFG_TO_RANK[lfg_roles[0].id]
+        required_roles = [after.guild.get_role(rid) for rid in required_ranks_for_first if after.guild.get_role(rid)]
+        required_names = ", ".join(r.name for r in required_roles)
 
-                # Only now that required_rank_ids exists, build readable role names
-                required_roles = [after.guild.get_role(rid) for rid in required_rank_ids if after.guild.get_role(rid)]
-                required_role_names = ", ".join(r.name for r in required_roles)
+        try:
+            dm_embed = discord.Embed(
+                title=f"LFG Role(s) Removed",
+                color=discord.Color.red(),
+                timestamp=datetime.utcnow()
+            )
+            dm_embed.add_field(name="Reason", value=f"You must have one of the following rank roles: **{required_names}**", inline=False)
+            dm_embed.add_field(name="Removed", value=", ".join(r.name for r in lfg_roles), inline=False)
+            await after.send(embed=dm_embed)
+        except discord.Forbidden:
+            print(f"❌ Couldn't DM {after.display_name}")
 
-                # 📨 DM Embed
-                dm_embed = discord.Embed(
-                    title=f"You have been stripped off of {role.name}",
-                    color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
-                )
-                dm_embed.add_field(
-                    name="**Reason:**",
-                    value=f"You need to have either of **{required_role_names}** rank roles to have **{role.name}**\n", inline=False
-                )
-                dm_embed.add_field(
-                    name="**Reason(dumb version):**",
-                    value=f"You can't pick up **{role.name}** role if you're **{current_rank_role}**", inline=False
-                )
-                dm_embed.set_footer(text="Only 1 Rank Sire")
+        # Log
+        log_embed = discord.Embed(
+            title="Invalid LFG Roles Removed",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        log_embed.set_author(name=str(after), icon_url=after.display_avatar.url)
+        log_embed.add_field(name="User", value=after.mention)
+        log_embed.add_field(name="Removed LFG Roles", value=", ".join(f"<@&{r.id}>" for r in lfg_roles))
+        log_embed.add_field(name="Required Rank Role(s)", value=", ".join(f"<@&{r}>" for r in required_ranks_for_first))
 
-                try:
-                    await after.send(embed=dm_embed)
-                except discord.Forbidden:
-                    print(f"❌ Couldn't DM {after.display_name}")
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
 
-                # 📝 Log Embed
-                log_embed = discord.Embed(
-                    title="Blocked LFG Role Assignment",
-                    color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
-                )
-                log_embed.set_author(name=str(after), icon_url=after.display_avatar.url)
-                log_embed.add_field(name="**User:**", value=f"{after.mention}")
-                log_embed.add_field(name="**Tried to add:**", value=f"<@&{role.id}>")
-                log_embed.add_field(name="**Current Rank:**", value=f"{current_rank_role.mention if current_rank_role else 'None'}")
-                log_embed.add_field(
-                    name="**Missing one of:**",
-                    value=f"{', '.join(f'<@&{rid}>' for rid in required_rank_ids)}"
-                )
-
-                log_channel = bot.get_channel(LOG_CHANNEL_ID)
-                if log_channel:
-                    await log_channel.send(embed=log_embed)
-
-            break  # Only process the first relevant LFG role
+            # break  # Only process the first relevant LFG role
 
     # ----- RANK ROLE CONFLICT CHECK -----
     rank_roles = [r for r in after.roles if r.id in ROLE_GROUP]
